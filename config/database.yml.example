@@ -19,3 +19,10 @@ production:
   username: root                       # MySQL database user
   password: mysecretpass               # MySQL database password
   socket: /var/run/mysqld/mysqld.sock
+
+staging:
+  adapter: mysql2
+  database: mconf_production           # MySQL database name
+  username: root                       # MySQL database user
+  password: mysecretpass               # MySQL database password
+  socket: /var/run/mysqld/mysqld.sock
