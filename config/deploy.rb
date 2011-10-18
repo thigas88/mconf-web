@@ -1,3 +1,6 @@
+# bundler bootstrap
+require 'bundler/capistrano'
+
 # read the configuration file
 CONFIG_FILE = File.join(File.dirname(__FILE__), 'deploy', 'conf.yml')
 set :configs, YAML.load_file(CONFIG_FILE)
@@ -6,6 +9,8 @@ set :configs, YAML.load_file(CONFIG_FILE)
 set :stages, %w(production staging)
 require 'capistrano/ext/multistage'
 
+set :deploy_via, :remote_cache
+set :git_enable_submodules, 1
 
 # Quick refs:
 # (note: you can replace "staging" by "production" to set the target stage, see deploy/conf.yml)
