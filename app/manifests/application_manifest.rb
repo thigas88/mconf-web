@@ -51,4 +51,6 @@ class ApplicationManifest < Moonshine::Manifest::Rails
   end
   # The following line includes the 'application_packages' recipe defined above
   recipe :application_packages
+
+  file '/etc/mysql/conf.d/binlog.cnf', :ensure => :present, :content => template('app/manifests/templates/binlog.cnf')
 end
