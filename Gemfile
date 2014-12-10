@@ -25,7 +25,7 @@ gem 'rmagick', :git => 'git://github.com/rmagick/rmagick.git', :require => false
 gem 'fckeditor'
 gem 'dynamic_form'
 gem 'bigbluebutton-api-ruby', :git => 'git://github.com/mconf/bigbluebutton-api-ruby.git'
-gem 'bigbluebutton_rails', :git => 'git://github.com/mconf/bigbluebutton_rails.git'
+gem 'bigbluebutton_rails', :git => 'git://github.com/mconf/bigbluebutton_rails.git', :tag => 'v1.3.0.mweb1'
 gem 'rspec-rails', '~> 2.5'
 gem 'action_mailer_tls'
 gem 'attachment_fu', :git => 'git://github.com/mconf/attachment_fu.git'
