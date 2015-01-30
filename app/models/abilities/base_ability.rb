@@ -14,6 +14,14 @@ module Abilities
 
       register_abilities(user)
     end
+
+    def is_space_and_enabled?(res)
+      res.try(:is_a?, Space) && resource_enabled?(res)
+    end
+
+    def resource_enabled?(res)
+      res.present? && !res.disabled
+    end
   end
 
 end

@@ -14,20 +14,21 @@ module Abilities
       # Note: For the private profile only, the public profile is always visible.
       #   Check for public profile with `can?(:show, user)` instead of `can?(:show, user.profile)`.
       can :read, Profile do |profile|
-        case profile.visibility
-        when Profile::VISIBILITY.index(:everybody)
-          true
-        when Profile::VISIBILITY.index(:members)
-          true
-        when Profile::VISIBILITY.index(:public_fellows)
-          profile.user.public_fellows.include?(user)
-        when Profile::VISIBILITY.index(:private_fellows)
-          profile.user.private_fellows.include?(user)
-        when Profile::VISIBILITY.index(:nobody)
-          false
-        end
+        resource_enabled?(profile.user) &&
+          case profile.visibility
+          when Profile::VISIBILITY.index(:everybody)
+            true
+          when Profile::VISIBILITY.index(:members)
+            true
+          when Profile::VISIBILITY.index(:public_fellows)
+            profile.user.public_fellows.include?(user)
+          when Profile::VISIBILITY.index(:private_fellows)
+            profile.user.private_fellows.include?(user)
+          when Profile::VISIBILITY.index(:nobody)
+            false
+          end
       end
-      can [:read, :edit, :update, :update_logo], Profile, user_id: user.id
+      can [:read, :edit, :update, :update_logo], Profile, user_id: user.id, user: { disabled: false }
 
       # Private messages
       can :create, PrivateMessage
@@ -39,28 +40,32 @@ module Abilities
       end
 
       # Spaces
-      can [:create, :select], Space
-      can [:read, :webconference, :recordings], Space, public: true
+      can [:create, :select], Space, disabled: false
+      can [:read, :webconference, :recordings], Space, public: true, disabled: false
       can [:read, :webconference, :recordings, :leave], Space do |space|
-        space.users.include?(user)
+        resource_enabled?(space) &&
+          space.users.include?(user)
       end
       # Only the admin can disable or update information on a space
       # Only global admins can destroy spaces
       can [:edit, :update, :update_logo, :user_permissions,
-        :webconference_options, :disable, :edit_recording], Space do |space|
-        space.admins.include?(user)
+           :webconference_options, :disable, :edit_recording], Space do |space|
+        resource_enabled?(space) &&
+          space.admins.include?(user)
       end
 
       # Join Requests
-      # TODO: make everything for events also
 
       # normal users can request membership
       # admins in a space can invite users
-      can [:create], JoinRequest
+      can [:create], JoinRequest do |jr|
+        is_space_and_enabled?(jr.group)
+      end
 
       # users that created a join request can do a few things over it
       can [:show, :decline], JoinRequest do |jr|
-        jr.group.try(:is_a?, Space) && jr.try(:candidate) == user
+        is_space_and_enabled?(jr.group) &&
+          jr.group.try(:is_a?, Space) && jr.try(:candidate) == user
       end
 
       # users can accept invitations they received, space admins can accept requests
@@ -68,8 +73,9 @@ module Abilities
       can :accept, JoinRequest do |jr|
         group = jr.group
         if group.try(:is_a?, Space)
-          (jr.is_invite? && jr.try(:candidate) == user) ||
-            (jr.is_request? && group.admins.include?(user))
+          is_space_and_enabled?(jr.group) &&
+            ((jr.is_invite? && jr.try(:candidate) == user) ||
+             (jr.is_request? && group.admins.include?(user)))
         else
           false
         end
@@ -77,53 +83,65 @@ module Abilities
 
       # space admins can list requests and invite new members
       can [:index_join_requests, :index_news, :invite], Space do |s|
-        s.admins.include?(user)
+        resource_enabled?(s) &&
+          s.admins.include?(user)
       end
 
       # space admins can work with all join requests in the space
       can [:show, :create, :decline], JoinRequest do |jr|
         group = jr.group
-        group.try(:is_a?, Space) && group.admins.include?(user)
+        is_space_and_enabled?(group) &&
+          group.admins.include?(user)
       end
 
       # Posts
       # TODO: maybe space admins should be able to alter posts
-      can :read, Post, space: { public: true }
+      can :read, Post, space: { public: true, disabled: false }
       can [:read, :create, :reply_post], Post do |post|
-        post.space.users.include?(user)
+        resource_enabled?(post.space) &&
+          post.space.users.include?(user)
       end
-      can [:read, :reply_post, :edit, :update, :destroy], Post, author_id: user.id
+      can [:read, :reply_post, :edit, :update, :destroy], Post, author_id: user.id, space: { disabled: false }
 
       # News
       # Only admins can create/alter news, the rest can only read
       # note: :show because :index is only for space admins
-      can :show, News, space: { public: true }
+      can :show, News, space: { public: true, disabled: false }
       can :show, News do |news|
-        news.space.users.include?(user)
+        resource_enabled?(news.space) &&
+          news.space.users.include?(user)
       end
       can :manage, News do |news|
-        news.space.admins.include?(user)
+        resource_enabled?(news.space) &&
+          news.space.admins.include?(user)
       end
 
       # Attachments
       can :manage, Attachment do |attach|
-        attach.space.admins.include?(user)
+        resource_enabled?(attach.space) &&
+          attach.space.admins.include?(user)
       end
       can [:read, :create], Attachment do |attach|
-        attach.space.users.include?(user)
+        resource_enabled?(attach.space) &&
+          attach.space.users.include?(user)
       end
       can [:destroy], Attachment do |attach|
-        attach.space.users.include?(user) &&
-        attach.author_id == user.id
+        resource_enabled?(attach.space) &&
+          attach.space.users.include?(user) &&
+          attach.author_id == user.id
       end
-      can :read, Attachment, space: { public: true }
+      can :read, Attachment, space: { public: true, disabled: false }
 
       # Permissions
       # Only space admins can update user roles/permissions
       can [:read, :edit, :update], Permission do |perm|
         case perm.subject_type
         when "Space"
-          admins = perm.subject.admins
+          if resource_enabled?(perm.subject)
+            admins = perm.subject.admins
+          else
+            admins = []
+          end
         else
           admins = []
         end
@@ -137,14 +155,17 @@ module Abilities
           when 'User' then
             event.owner_id == user.id
           when 'Space' then
-            !user.permissions.where(subject_type: 'MwebEvents::Event',
-              role_id: Role.find_by_name('Organizer'), subject_id: event.id).empty? ||
-            !user.permissions.where(subject_type: 'Space', subject_id: event.owner_id,
-            role_id: Role.find_by_name('Admin')).empty?
+            resource_enabled?(event.owner) &&
+              (!user.permissions.where(subject_type: 'MwebEvents::Event',
+                role_id: Role.find_by_name('Organizer'), subject_id: event.id).empty? ||
+               !user.permissions.where(subject_type: 'Space', subject_id: event.owner_id,
+                role_id: Role.find_by_name('Admin')).empty?)
           end
         end
 
-        can [:select, :read], MwebEvents::Event
+        can [:select, :read], MwebEvents::Event do |e|
+          resource_enabled?(e.owner)
+        end
 
         # Create events if they have a nil owner or are owned by a space you admin
         can :create, MwebEvents::Event do |e|
@@ -156,8 +177,10 @@ module Abilities
         end
 
         can :register, MwebEvents::Event do |e|
-          MwebEvents::Participant.where(owner_id: user.id, event_id: e.id).empty? &&
-          (e.public || (e.owner_type == 'Space' && e.owner.users.include?(user)))
+          enabled = e.owner_type == "Space" ? is_space_and_enabled?(e.owner) : true
+          enabled &&
+            MwebEvents::Participant.where(owner_id: user.id, event_id: e.id).empty? &&
+            (e.public || (e.owner_type == 'Space' && e.owner.users.include?(user)))
         end
 
         # Participants from MwebEvents
@@ -169,10 +192,9 @@ module Abilities
           event_can_be_managed_by(p.event, user)
         end
 
-        can :index, MwebEvents::Participant
-        can :create, MwebEvents::Participant
-
-        cannot [:read, :index, :update, :destroy], Space, disabled: true
+        can [:index, :create], MwebEvents::Participant do |p|
+          p.event.owner_type == "Space" ? is_space_and_enabled?(p.event.owner) : true
+        end
       end
     end
 
@@ -195,41 +217,48 @@ module Abilities
       # `:create_meeting` is a custom name, not an action that exists in the controller
       can [:join_options, :create_meeting, :fetch_recordings,
            :invitation, :send_invitation], BigbluebuttonRoom do |room|
-        user_is_owner_or_belongs_to_rooms_space(user, room)
+        resource_enabled?(room.owner) &&
+          user_is_owner_or_belongs_to_rooms_space(user, room)
       end
 
       # For user rooms only the owner can end meetings.
       # In spaces only the admins and the person that started the meeting can end it.
       can :end, BigbluebuttonRoom do |room|
-        user_can_end_meeting(user, room)
+        resource_enabled?(room.owner) &&
+          user_can_end_meeting(user, room)
       end
 
       # Users can recording meetings in their rooms, but only if they have the record flag set.
       # `:record_meeting` is a custom name, not an action that exists in the controller
       can :record_meeting, BigbluebuttonRoom do |room|
-        user.can_record && user_is_owner_or_belongs_to_rooms_space(user, room)
+        resource_enabled?(room.owner) &&
+          user.can_record && user_is_owner_or_belongs_to_rooms_space(user, room)
       end
 
       # Currently only user rooms can be updated
-      can [:update], BigbluebuttonRoom do |room|
-        room.owner_type == "User" && room.owner.id == user.id
+      can :update, BigbluebuttonRoom do |room|
+        resource_enabled?(room.owner) &&
+          room.owner_type == "User" && room.owner.id == user.id
       end
 
       # some actions in rooms should be accessible to any logged user
       # some of them will do the authorization themselves (e.g. permissions for :join
       # will change depending on the user and the target room)
-      can [:invite, :invite_userid, :running, :join, :join_mobile], BigbluebuttonRoom
+      can [:invite, :invite_userid, :running, :join, :join_mobile], BigbluebuttonRoom do |room|
+        resource_enabled?(room.owner) &&
+          (room.owner_type == "User" || room.owner_type == "Space")
+      end
 
       # a user can play recordings of his own room or recordings of
       # rooms of either public spaces or spaces he's a member of
-      can [:play], BigbluebuttonRecording do |recording|
+      can :play, BigbluebuttonRecording do |recording|
         user_is_member_of_recordings_space(user, recording) ||
           recordings_space_is_public(recording) ||
           user_is_owner_of_recording(user, recording)
       end
 
       # a user can edit his recordings and recordings in spaces where he's an admin
-      can [:update], BigbluebuttonRecording do |recording|
+      can :update, BigbluebuttonRecording do |recording|
         user_is_owner_of_recording(user, recording) ||
           user_is_admin_of_recordings_space(user, recording)
       end
@@ -320,7 +349,6 @@ module Abilities
     def recordings_space_is_public(recording)
       recording.room.try(:public?)
     end
-
   end
 
 end
